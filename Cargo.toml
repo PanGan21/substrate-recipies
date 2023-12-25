@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "node", "pallets/double-map", "pallets/map-set", 
+    "pallets/storage-cache",
+    "pallets/template", "pallets/vec-set",
+    "runtime", "traits/account-set",
+]
+[profile.release]
+panic = "unwind"
