@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "node", "pallets/basic-token", "pallets/constants-config", "pallets/double-map", "pallets/map-set", "pallets/ringbuffer-queue", "pallets/simple-crowdfund", 
+    "node", "pallets/basic-token", "pallets/constants-config", "pallets/double-map", "pallets/last-caller", "pallets/map-set", "pallets/ringbuffer-queue", "pallets/simple-crowdfund", 
     "pallets/storage-cache", "pallets/struct-storage",
     "pallets/template", "pallets/vec-set",
     "runtime", "traits/account-set",
