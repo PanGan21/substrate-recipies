@@ -1,5 +1,17 @@
-use crate::{mock::*, Event, FundInfo};
-use frame_support::{assert_err, assert_ok};
+use crate::{mock::*, Error, Event, FundInfo};
+use frame_support::{assert_err, assert_ok, traits::Hooks};
+
+fn run_to_block(n: u64) {
+	while System::block_number() < n {
+		SimpleCrowdfund::on_finalize(System::block_number());
+		Balances::on_finalize(System::block_number());
+		System::on_finalize(System::block_number());
+		System::set_block_number(System::block_number() + 1);
+		System::on_initialize(System::block_number() + 1);
+		Balances::on_initialize(System::block_number() + 1);
+		SimpleCrowdfund::on_initialize(System::block_number() + 1);
+	}
+}
 
 #[test]
 fn basic_setup_works() {
@@ -58,5 +70,34 @@ fn contribute_works() {
 		assert_eq!(Balances::free_balance(SimpleCrowdfund::fund_account_id(0)), 50);
 		// Last contribution time recorded
 		assert_eq!(SimpleCrowdfund::funds(0).unwrap().raised, 49);
+	})
+}
+
+#[test]
+fn contribute_handles_basic_errors() {
+	new_test_ext().execute_with(|| {
+		// Cannot contribute to non-existing fund
+		assert_err!(
+			SimpleCrowdfund::contribute(RuntimeOrigin::signed(1), 0, 49),
+			Error::<Test>::InvalidIndex
+		);
+		// Cannot contribute below minimum contribution
+		assert_err!(
+			SimpleCrowdfund::contribute(RuntimeOrigin::signed(1), 0, 9),
+			Error::<Test>::ContributionTooSmall
+		);
+
+		// Set up a crowdfund
+		assert_ok!(SimpleCrowdfund::create(RuntimeOrigin::signed(1), 2, 1000, 9));
+		assert_ok!(SimpleCrowdfund::contribute(RuntimeOrigin::signed(1), 0, 101));
+
+		// Move past end date
+		run_to_block(10);
+
+		// Cannot contribute to ended fund
+		assert_err!(
+			SimpleCrowdfund::contribute(RuntimeOrigin::signed(1), 0, 49),
+			Error::<Test>::ContributionPeriodOver
+		);
 	})
 }
