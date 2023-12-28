@@ -79,6 +79,8 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		Created(FundIndex, BlockNumberFor<T>),
 		Contributed(T::AccountId, FundIndex, BalanceOf<T>, BlockNumberFor<T>),
+		Withdrew(T::AccountId, FundIndex, BalanceOf<T>, BlockNumberFor<T>),
+		Dissolved(FundIndex, BlockNumberFor<T>, T::AccountId),
 		Dispensed(FundIndex, BlockNumberFor<T>, T::AccountId),
 	}
 
@@ -92,8 +94,12 @@ pub mod pallet {
 		InvalidIndex,
 		/// The crowdfund's contribution period has ended; no more contributions will be accepted
 		ContributionPeriodOver,
+		/// You cannot withdraw funds because you have not contributed any
+		NoContribution,
 		/// You may not withdraw or dispense funds while the fund is still active
 		FundStillActive,
+		/// You cannot dissolve a fund that has not yet completed its retirement period
+		FundNotRetired,
 		/// Cannot dispense funds from an unsuccessful fund
 		UnsuccessfulFund,
 	}
@@ -170,31 +176,64 @@ pub mod pallet {
 
 			Ok(())
 		}
-		/// Dispense a payment to the beneficiary of a successful crowdfund.
-		/// The beneficiary receives the contributed funds and the caller receives
-		/// the deposit as a reward to incentivize clearing settled crowdfunds out of storage.
+
+		/// Withdraw full balance of a contributor to a fund
 		#[pallet::call_index(2)]
 		#[pallet::weight(10_000)]
-		pub fn dispense(origin: OriginFor<T>, index: FundIndex) -> DispatchResult {
+		pub fn withdraw(origin: OriginFor<T>, index: FundIndex) -> DispatchResult {
 			let caller = ensure_signed(origin)?;
 
-			let crowdfund = Self::funds(&index).ok_or(Error::<T>::InvalidIndex)?;
+			let mut crowdfund = Self::funds(&index).ok_or(Error::<T>::InvalidIndex)?;
+			let block_number = frame_system::Pallet::<T>::block_number();
+			ensure!(crowdfund.end < block_number, Error::<T>::FundStillActive);
+
+			let balance = Self::contribution_get(index, &caller);
+			ensure!(balance > Zero::zero(), Error::<T>::NoContribution);
+
+			T::Currency::resolve_creating(
+				&caller,
+				T::Currency::withdraw(
+					&Self::fund_account_id(index),
+					balance,
+					WithdrawReasons::TRANSFER,
+					ExistenceRequirement::AllowDeath,
+				)?,
+			);
+
+			// Update storage
+			Self::contribution_kill(index, &caller);
+			crowdfund.raised = crowdfund.raised.saturating_add(balance);
+			<Funds<T>>::insert(index, &crowdfund);
+
+			Self::deposit_event(Event::Withdrew(caller, index, balance, block_number));
+			Ok(())
+		}
+
+		/// Dissolve an entire crowdfund after its retirement period has expired.
+		/// Anyone can call this function, and they are incentivized to do so because
+		/// they inherit the deposit.
+		#[pallet::call_index(3)]
+		#[pallet::weight(10_000)]
+		pub fn dissolve(origin: OriginFor<T>, index: FundIndex) -> DispatchResult {
+			let reporter = ensure_signed(origin)?;
+
+			let fund = Self::funds(index).ok_or(Error::<T>::InvalidIndex)?;
 
 			// Check that enough time has passed to remove from storage
 			let block_number = frame_system::Pallet::<T>::block_number();
-			ensure!(crowdfund.end <= block_number, Error::<T>::FundStillActive);
+			ensure!(
+				block_number >= fund.end + T::RetirementPeriod::get(),
+				Error::<T>::FundNotRetired
+			);
 
-			// Check that the fund was actually successful
-			ensure!(crowdfund.raised >= crowdfund.goal, Error::<T>::UnsuccessfulFund);
+			let account = Self::fund_account_id(index);
 
-			let pallet_account = Self::fund_account_id(index);
-
-			// Beneficiary collects the contributed funds
+			// Dissolver collects the deposit and any remaining funds
 			let _ = T::Currency::resolve_creating(
-				&crowdfund.beneficiary,
+				&reporter,
 				T::Currency::withdraw(
-					&pallet_account,
-					crowdfund.deposit,
+					&account,
+					fund.deposit + fund.raised,
 					WithdrawReasons::TRANSFER,
 					ExistenceRequirement::AllowDeath,
 				)?,
@@ -205,7 +244,60 @@ pub mod pallet {
 			// Remove all the contributor info from storage in a single write.
 			// This is possible thanks to the use of a child tree.
 			Self::crowdfund_kill(index);
-			Self::deposit_event(Event::Dispensed(index, block_number, caller));
+
+			Self::deposit_event(Event::Dissolved(index, block_number, reporter));
+
+			Ok(())
+		}
+		/// Dispense a payment to the beneficiary of a successful crowdfund.
+		/// The beneficiary receives the contributed funds and the caller receives
+		/// the deposit as a reward to incentivize clearing settled crowdfunds out of storage.
+		#[pallet::call_index(4)]
+		#[pallet::weight(10_000)]
+		pub fn dispense(origin: OriginFor<T>, index: FundIndex) -> DispatchResult {
+			let caller = ensure_signed(origin)?;
+
+			let fund = Self::funds(index).ok_or(Error::<T>::InvalidIndex)?;
+
+			// Check that enough time has passed to remove from storage
+			let now = frame_system::Pallet::<T>::block_number();
+
+			ensure!(now >= fund.end, Error::<T>::FundStillActive);
+
+			// Check that the fund was actually successful
+			ensure!(fund.raised >= fund.goal, Error::<T>::UnsuccessfulFund);
+
+			let account = Self::fund_account_id(index);
+
+			// Beneficiary collects the contributed funds
+			let _ = T::Currency::resolve_creating(
+				&fund.beneficiary,
+				T::Currency::withdraw(
+					&account,
+					fund.raised,
+					WithdrawReasons::TRANSFER,
+					ExistenceRequirement::AllowDeath,
+				)?,
+			);
+
+			// Caller collects the deposit
+			let _ = T::Currency::resolve_creating(
+				&caller,
+				T::Currency::withdraw(
+					&account,
+					fund.deposit,
+					WithdrawReasons::TRANSFER,
+					ExistenceRequirement::AllowDeath,
+				)?,
+			);
+
+			// Remove the fund info from storage
+			<Funds<T>>::remove(index);
+			// Remove all the contributor info from storage in a single write.
+			// This is possible thanks to the use of a child tree.
+			Self::crowdfund_kill(index);
+
+			Self::deposit_event(Event::Dispensed(index, now, caller));
 
 			Ok(())
 		}
@@ -218,7 +310,7 @@ impl<T: Config> Pallet<T> {
 	/// This actually does computation. If you need to keep using it, then make sure you cache the
 	/// value and only call this once.
 	fn fund_account_id(index: FundIndex) -> T::AccountId {
-		PALLET_ID.into_account_truncating()
+		PALLET_ID.into_sub_account_truncating(index)
 	}
 	/// Find the ID associated with the fund
 	///
