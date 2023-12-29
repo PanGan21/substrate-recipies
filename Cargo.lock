@@ -5703,6 +5703,7 @@ dependencies = [
  "frame-system-benchmarking",
  "frame-system-rpc-runtime-api",
  "frame-try-runtime",
+ "last-caller",
  "pallet-aura",
  "pallet-balances",
  "pallet-grandpa",
