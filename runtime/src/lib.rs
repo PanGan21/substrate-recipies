@@ -51,6 +51,8 @@ pub use pallet_template;
 
 pub use last_caller;
 
+pub use default_instance;
+
 /// An index to a block.
 pub type BlockNumber = u32;
 
@@ -284,6 +286,10 @@ impl last_caller::Config<last_caller::Instance2> for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 }
 
+impl default_instance::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 construct_runtime!(
 	pub struct Runtime {
@@ -298,6 +304,7 @@ construct_runtime!(
 		TemplateModule: pallet_template,
 		LastCallerInstance1: last_caller::<Instance1>,
 		LastCallerInstance2: last_caller::<Instance2>,
+		DefaultInstance: default_instance,
 	}
 );
 
