@@ -4,11 +4,18 @@ use frame_support::{traits::Currency, PalletId};
 pub use pallet::*;
 use sp_runtime::traits::AccountIdConversion;
 
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
+
 /// Hardcoded pallet ID; used to create the special Pot Account
 /// Must be exactly 8 characters long
 const PALLET_ID: PalletId = PalletId(*b"Charity!");
 
-type BalanceOf<T> = <<T as Config>::Currency as Currency<T::AccountId>>::Balance<T>;
+type BalanceOf<T> =
+	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
@@ -26,24 +33,28 @@ pub mod pallet {
 	pub trait Config: frame_system::Config {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// The currency type that the charity deals in
-		type Currency: Currency<T::AccountId>;
+		type Currency: Currency<Self::AccountId>;
 	}
 
 	#[pallet::genesis_config]
-	#[derive(Default)]
-	pub struct GenesisConfig;
+	#[derive(frame_support::DefaultNoBound)]
+	pub struct GenesisConfig<T: Config> {
+		#[serde(skip)]
+		pub _config: sp_std::marker::PhantomData<T>,
+	}
 
 	#[pallet::genesis_build]
-	impl<T: Config> BuildGenesisConfig for GenesisConfig {
+	impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
 		fn build(&self) {
 			let _ = T::Currency::make_free_balance_be(
-				Self::account_id(),
+				&Pallet::<T>::account_id(),
 				T::Currency::minimum_balance(),
 			);
 		}
 	}
 
 	#[pallet::event]
+	#[pallet::generate_deposit(pub fn deposit_event)]
 	pub enum Event<T: Config> {
 		/// Donor has made a charitable donation to the charity
 		DonationReceived(T::AccountId, BalanceOf<T>, BalanceOf<T>),
@@ -66,7 +77,7 @@ pub mod pallet {
 				ExistenceRequirement::AllowDeath,
 			)?;
 
-			Self::deposit_event(Event::DonationReceived(sender, Self::account_id(), Self::pot()));
+			Self::deposit_event(Event::DonationReceived(sender, amount, Self::pot()));
 
 			Ok(())
 		}
@@ -80,7 +91,7 @@ impl<T: Config> Pallet<T> {
 	}
 
 	/// The Charity's balance
-	fn post() -> BalanceOf<T> {
-		T::Currency::free_balance(&Self::account_id());
+	fn pot() -> BalanceOf<T> {
+		T::Currency::free_balance(&Self::account_id())
 	}
 }
