@@ -1,6 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frame_support::{traits::Currency, PalletId};
+use frame_support::{
+	traits::{Currency, Imbalance, OnUnbalanced},
+	PalletId,
+};
 pub use pallet::*;
 use sp_runtime::traits::AccountIdConversion;
 
@@ -16,6 +19,9 @@ const PALLET_ID: PalletId = PalletId(*b"Charity!");
 
 type BalanceOf<T> =
 	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+type NegativeImbalanceOf<T> = <<T as Config>::Currency as Currency<
+	<T as frame_system::Config>::AccountId,
+>>::NegativeImbalance;
 
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
@@ -82,6 +88,33 @@ pub mod pallet {
 
 			Ok(())
 		}
+
+		/// Allocate the Charity's funds
+		///
+		/// Take funds from the Charity's pot and send them somewhere. This call requires root
+		/// origin, which means it must come from a governance mechanism such as Substrate's
+		/// Democracy pallet.
+		#[pallet::call_index(1)]
+		#[pallet::weight(10_000)]
+		pub fn allocate(
+			origin: OriginFor<T>,
+			dest: T::AccountId,
+			amount: BalanceOf<T>,
+		) -> DispatchResult {
+			ensure_root(origin)?;
+
+			T::Currency::transfer(
+				&Self::account_id(),
+				&dest,
+				amount,
+				ExistenceRequirement::AllowDeath,
+			)
+			.map_err(|_| DispatchError::Other("Can't make allocation"))?;
+
+			Self::deposit_event(Event::FundsAllocated(dest, amount, Self::pot()));
+
+			Ok(())
+		}
 	}
 }
 
@@ -94,5 +127,19 @@ impl<T: Config> Pallet<T> {
 	/// The Charity's balance
 	fn pot() -> BalanceOf<T> {
 		T::Currency::free_balance(&Self::account_id())
+	}
+}
+
+// This implementation allows the charity to be the recipient of funds that are burned elsewhere in
+// the runtime. For eample, it could be transaction fees, consensus-related slashing, or burns that
+// align incentives in other pallets.
+impl<T: Config> OnUnbalanced<NegativeImbalanceOf<T>> for Pallet<T> {
+	fn on_nonzero_unbalanced(amount: NegativeImbalanceOf<T>) {
+		let numeric_amount = amount.peek();
+
+		// Must resolve into existing but better to be safe.
+		let _ = T::Currency::resolve_creating(&Self::account_id(), amount);
+
+		Self::deposit_event(Event::ImbalanceAbsorbed(numeric_amount, Self::pot()));
 	}
 }
