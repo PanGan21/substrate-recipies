@@ -92,5 +92,62 @@ pub mod pallet {
 
 			Ok(())
 		}
+
+		/// Update the Substrate-fixed accumulator implementation's value by multiplying it
+		/// by the new factor given in the extrinsic
+		#[pallet::call_index(1)]
+		#[pallet::weight(10_000)]
+		pub fn update_fixed(origin: OriginFor<T>, new_factor: U16F16) -> DispatchResult {
+			ensure_signed(origin)?;
+
+			let old_accumulated = Self::fixed_value();
+
+			// Multiply, handling overflow
+			let new_product =
+				old_accumulated.checked_mul(new_factor).ok_or(Error::<T>::Overflow)?;
+
+			FixedAccumulator::<T>::put(new_product);
+
+			Self::deposit_event(Event::FixedUpdated(new_factor, new_product));
+
+			Ok(())
+		}
+
+		/// Update the manually-implemented accumulator's value by multiplying it
+		/// by the new factor given in the extrinsic
+		#[pallet::call_index(2)]
+		#[pallet::weight(10_000)]
+		pub fn update_manual(origin: OriginFor<T>, new_factor: u32) -> DispatchResult {
+			ensure_signed(origin)?;
+
+			// To ensure we don't overflow unnecessarily, the values are cast up to u64 before
+			// multiplying. This intermediate format has 48 integer positions and 16 fractional.
+			let old_accumulated: u64 = Self::manual_value().into();
+			let new_factor_u64: u64 = new_factor.into();
+
+			// Perform the multiplication on the u64 values
+			// This intermediate format has 32 integer positions and 32 fractional.
+			let raw_product: u64 = old_accumulated * new_factor_u64;
+
+			// Right shift to restore the convention that 16 bits are fractional.
+			// This is a lossy conversion.
+			// This intermediate format has 48 integer positions and 16 fractional.
+			let shifted_product: u64 = raw_product << 16;
+
+			// Ensure that the product fits in the u32, and error if it doesn't
+			if shifted_product > (u32::MAX as u64) {
+				return Err(Error::<T>::Overflow.into());
+			}
+
+			let final_product = shifted_product as u32;
+
+			// Write the new value to storage
+			ManualAccumulator::<T>::put(final_product);
+
+			// Emit event
+			Self::deposit_event(Event::ManualUpdated(new_factor, final_product));
+
+			Ok(())
+		}
 	}
 }
