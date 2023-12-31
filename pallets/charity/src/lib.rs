@@ -75,7 +75,8 @@ pub mod pallet {
 				&Self::account_id(),
 				amount,
 				ExistenceRequirement::AllowDeath,
-			)?;
+			)
+			.map_err(|_| DispatchError::Other("Can't make donation"))?;
 
 			Self::deposit_event(Event::DonationReceived(sender, amount, Self::pot()));
 

@@ -35,3 +35,10 @@ fn donation_works() {
 		);
 	})
 }
+
+#[test]
+fn cannot_donate_too_much() {
+	new_test_ext().execute_with(|| {
+		assert_err!(Charity::donate(RuntimeOrigin::signed(1), 14), "Can't make donation");
+	})
+}
