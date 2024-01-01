@@ -1,9 +1,16 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use frame_system::pallet_prelude::BlockNumberFor;
-pub use pallet::*;
 use sp_arithmetic::Percent;
 use substrate_fixed::{transcendental::exp, types::I32F32};
+
+pub use pallet::*;
+
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
 
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
